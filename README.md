@@ -63,4 +63,3 @@ Leave out either flag if you don't want it. The app lives in `~/Applications/Cla
 | `make_icon.py` | Redraws `icon1024.png` (needs Pillow) |
 
 MIT licensed.
-<!-- sync test -->
