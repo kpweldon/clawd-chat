@@ -62,7 +62,7 @@ button{font:inherit;cursor:pointer}
 .t .meta{display:flex;gap:6px;margin-top:5px;flex-wrap:wrap}
 .pill{font-size:11px;font-weight:600;border-radius:999px;padding:1px 8px;background:var(--line);color:var(--ink2);white-space:nowrap}
 .pill.work{background:var(--orange);color:#fff}
-.pill.live{background:var(--orange-soft);color:var(--orange-deep)}
+.pill.live{background:#2E7D4F;color:#fff;letter-spacing:.04em}
 .pill.agents{background:transparent;border:1px solid var(--line)}
 .t{cursor:pointer;padding-left:16px}
 .t::after{content:"";position:absolute;left:5px;top:12px;bottom:12px;width:4px;border-radius:4px;background:var(--tc,transparent)}
@@ -345,7 +345,7 @@ function drawThreads(){
     const unread = t.id !== current && t.waiting && (seen[t.id] || 0) < t.updated - 1 && (Date.now()/1000 - t.updated) < 3*86400;
     const pills = [];
     if (t.working) pills.push('<span class="pill work">Working…</span>');
-    else if (t.live) pills.push('<span class="pill live">Open in terminal</span>');
+    if (t.live) pills.push('<span class="pill live">● LIVE' + (t.live_status === 'busy' ? ' · working' : '') + '</span>');
     if (t.agents) pills.push('<span class="pill agents">' + t.agents + ' agent' + (t.agents>1?'s':'') + (t.agents_running ? ' · ' + t.agents_running + ' running' : '') + '</span>');
     html += '<div class="t' + (t.id === current ? ' on' : '') + (unread ? ' unread' : '') + (t.color ? ' c-' + t.color : '') + '" tabindex="0" data-id="' + t.id + '">' +
       '<div class="row1">' + (t.pinned ? '<span class="pin" title="Pinned">●</span>' : '') + '<span class="title">' + esc(t.title) + '</span><span class="when">' + ago(t.updated) + '</span><button class="more" title="Rename, colour, pin">⋯</button></div>' +
@@ -402,7 +402,7 @@ async function refreshThread(scrollEnd){
 function drawHead(){
   const t = thread;
   $('#htitle').textContent = t.title;
-  const status = t.working ? 'Claude is working' : t.live ? 'Open in a terminal right now' : 'Idle';
+  const status = t.live ? (t.live_status === 'busy' ? 'LIVE in a terminal · working' : 'LIVE in a terminal') : t.working ? 'Claude is working' : 'Idle';
   $('#hsub').textContent = folder(t.cwd) + '  ·  ' + status;
   $('#stopbtn').hidden = !t.working;
   $('#resumebtn').hidden = false;
@@ -410,7 +410,7 @@ function drawHead(){
   $('#pinbtn').textContent = t.pinned ? 'Pinned' : 'Pin';
   $('#pinbtn').classList.toggle('pinned', !!t.pinned);
   const note = $('#note');
-  if (t.live && !t.working){ note.hidden = false; note.className = 'note'; note.textContent = 'This thread is still running in a terminal. Anything you send here runs a second Claude on the same thread, so wait for the terminal to finish first.'; }
+  if (t.live){ note.hidden = false; note.className = 'note'; note.textContent = 'LIVE: this thread is open in a terminal right now. Type there instead. Sending from here starts a second Claude on the same thread.'; }
   else { note.hidden = true; }
   updateSend();
 }
@@ -636,7 +636,11 @@ function scheduleList(){
   listT = setTimeout(async () => { if (!document.hidden) await loadThreads(); scheduleList(); }, 20000);
 }
 window.addEventListener('focus', () => { loadThreads(); if (current) refreshThread(false); });
-setInterval(() => fetch('/alive').catch(()=>{}), 60000);
+// heartbeat: when it stops, the server quits this window's Chrome so it can't pop up blank tabs later
+const beat = () => fetch('/alive').catch(()=>{});
+beat(); setInterval(beat, 20000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) beat(); });
+window.addEventListener('pagehide', () => { try { navigator.sendBeacon('/bye'); } catch(e){} });
 (async () => {
   await loadThreads();
   const last = new URLSearchParams(location.search).get('thread') || store.get('current', null);

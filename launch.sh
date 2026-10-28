@@ -40,14 +40,13 @@ raise(){ osascript -e "tell application \"System Events\" to set frontmost of (f
 pid="$(chat_pid)" || pid=""
 if [ -n "$pid" ]; then
   if [ "$(window_count "$pid")" -gt 0 ]; then
-    raise "$pid"
-  else
-    # foreground on purpose: Chrome hands the command line to the instance that
-    # owns the profile and exits; a backgrounded child would be reaped first
-    "$CHROME" "${ARGS[@]}" >/dev/null 2>&1
-    raise "$pid"
+    [ -n "$CLAWD_BACKGROUND" ] || raise "$pid"
+    exit 0
   fi
-  exit 0
+  # A chat Chrome with no window left. Activating it would make Chrome open a
+  # blank New Tab window, so quit it and cold-start a fresh one below.
+  kill "$pid" 2>/dev/null
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 "$pid" 2>/dev/null || break; /bin/sleep 0.2; done
 fi
 
 # cold start: the app process becomes Chrome, so the Dock icon stays lit

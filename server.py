@@ -334,6 +334,28 @@ def headless_pids():
     return _PS["out"]
 
 
+_TS = {"t": 0, "map": {}}
+
+
+def terminal_sessions():
+    """{session id: "busy"|"idle"} for Claude Code sessions open in a terminal right now,
+    from the pid files Claude Code keeps in ~/.claude/sessions (cached 2 s).
+    Headless runs (the app's own replies) say entrypoint "sdk-cli" and are left out."""
+    if time.time() - _TS["t"] > 2:
+        live = {}
+        for f in glob.glob(os.path.expanduser("~/.claude/sessions/*.json")):
+            try:
+                d = json.load(open(f))
+                if d.get("entrypoint") != "cli" or not d.get("sessionId"):
+                    continue
+                os.kill(int(d["pid"]), 0)          # raises if that claude has exited
+            except Exception:
+                continue
+            live[d["sessionId"]] = d.get("status") or "idle"
+        _TS["map"], _TS["t"] = live, time.time()
+    return _TS["map"]
+
+
 def running(sid):
     with JOBS_LOCK:
         j = JOBS.get(sid)
@@ -445,7 +467,7 @@ def api_threads():
             "cwd": project_cwd(path, tr), "updated": max(tr.last, mt if not tr.last else 0) or mt,
             "messages": sum(1 for it in tr.items if it["kind"] in ("user", "claude")),
             "agents": len(ag), "agents_running": sum(1 for a in ag.values() if not a["finished"] and time.time() - a["mtime"] < 300),
-            "working": bool(job), "live": (not job) and time.time() - mt < 90 and not recently_ours(sid, mt),
+            "working": bool(job), "live": sid in terminal_sessions(), "live_status": terminal_sessions().get(sid, ""),
             "waiting": tr.items[-1]["kind"] == "claude" if tr.items else False,
         })
     out.sort(key=lambda x: -x["updated"])
@@ -474,7 +496,7 @@ def api_thread(sid):
             "color": m.get("color", ""), "pinned": m.get("pinned", 0),
             "cwd": project_cwd(path, tr), "items": items,
             "working": bool(job), "working_since": job["started"] if job else 0,
-            "pending_steps": tr.pending_tools, "live": (not job) and time.time() - mt < 90 and not recently_ours(sid, mt),
+            "pending_steps": tr.pending_tools, "live": sid in terminal_sessions(), "live_status": terminal_sessions().get(sid, ""),
             "error": "" if job else job_error(sid), "version": tr.offset}
 
 
@@ -497,6 +519,31 @@ def api_agent(sid, aid):
 
 
 LAST_ALIVE = [time.time()]
+PAGE_ALIVE = [time.time()]          # last heartbeat from the chat page itself
+CHAT_PROFILE = os.path.expanduser("~/Library/Application Support/ClaudeChatProfile")
+PAGE_GONE_S = 150                   # > Chrome's 1/min timer throttling for hidden pages
+
+
+def chat_chrome_pids():
+    """Main Chrome process(es) running the chat window's own profile."""
+    out = subprocess.run(["ps", "-axo", "pid=,comm=,args="], capture_output=True, text=True).stdout
+    return [int(l.split()[0]) for l in out.splitlines()
+            if "Google Chrome.app/Contents/MacOS/Google Chrome" in l and "--user-data-dir=" + CHAT_PROFILE in l]
+
+
+def chrome_watch():
+    """Quit the chat's Chrome once its window is gone. macOS Chrome stays alive with
+    no windows, and anything that later activates it (Dock, launcher) makes it open
+    a blank New Tab window."""
+    while True:
+        time.sleep(10)
+        if time.time() - PAGE_ALIVE[0] < PAGE_GONE_S:
+            continue
+        for pid in chat_chrome_pids():
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
 
 
 class H(BaseHTTPRequestHandler):
@@ -543,6 +590,11 @@ class H(BaseHTTPRequestHandler):
             if u.path == "/ping":
                 return self._json({"ok": True})
             if u.path == "/alive":
+                PAGE_ALIVE[0] = time.time()
+                return self._json({"ok": True})
+            if u.path == "/bye":
+                # window closing (or reloading: the reload's own /alive lands within seconds)
+                PAGE_ALIVE[0] = time.time() - PAGE_GONE_S + 8
                 return self._json({"ok": True})
             if u.path == "/api/threads":
                 return self._json(api_threads())
@@ -561,7 +613,11 @@ class H(BaseHTTPRequestHandler):
             return self._json({"error": "bad origin"}, 403)
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            body = json.loads(self.rfile.read(n) or b"{}")
+            raw = self.rfile.read(n)
+            if u.path == "/bye":            # navigator.sendBeacon from the closing page
+                PAGE_ALIVE[0] = time.time() - PAGE_GONE_S + 8
+                return self._json({"ok": True})
+            body = json.loads(raw or b"{}")
             if u.path == "/api/send":
                 text = (body.get("text") or "").strip()
                 if not text:
@@ -622,5 +678,6 @@ if __name__ == "__main__":
     if "--daemon" in sys.argv:
         daemonize()
     threading.Thread(target=reaper, args=(srv,), daemon=True).start()
+    threading.Thread(target=chrome_watch, daemon=True).start()
     print("Clawd Chat on http://127.0.0.1:%d" % PORT, flush=True)
     srv.serve_forever()
