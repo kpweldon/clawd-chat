@@ -1,0 +1,8 @@
+{
+  "port": 8792,
+  "days": 14,
+  "idle_exit_minutes": 15,
+  "claude": "~/.local/bin/claude",
+  "permission_mode": "auto",
+  "new_chat_folder": "~"
+}

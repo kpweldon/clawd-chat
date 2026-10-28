@@ -1,0 +1,12 @@
+# your conversations, labels and logs never leave this Mac
+jobs/
+meta.json
+meta.json.tmp
+*.log
+__pycache__/
+AppIcon.icns
+.DS_Store
+.autopush*
+*.bak
+*.bak-*
+*.tmp
